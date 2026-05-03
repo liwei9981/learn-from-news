@@ -1,0 +1,28 @@
+name: Deploy to DigitalOcean
+
+on:
+  push:
+    branches: [ main ] # Triggers automatically when you push to main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Deploy to Droplet via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Navigate to the folder (change the repository name below if necessary)
+            cd /app/learn-from-news
+            
+            # Pull the latest code from GitHub
+            git pull origin main
+            
+            # Rebuild and restart the Docker container
+            docker compose up -d --build

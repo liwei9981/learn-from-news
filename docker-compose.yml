@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: learn_from_news_bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./.local:/app/.local
+      - ./Output files:/app/Output files
+      - ./bot.log:/app/bot.log
