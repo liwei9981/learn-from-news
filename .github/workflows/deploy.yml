@@ -13,6 +13,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Copy repository contents via scp
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "."
+          target: "/app/learn-from-news"
+
       - name: Deploy to Droplet via SSH
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -20,20 +29,5 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Ensure the /app directory exists
-            mkdir -p /app
-            cd /app
-            
-            # If the repository hasn't been cloned yet, clone it
-            if [ ! -d "learn-from-news" ]; then
-              git clone https://github.com/liwei9981/learn-from-news.git
-            fi
-            
-            # Navigate to the folder
-            cd learn-from-news
-            
-            # Pull the latest code from GitHub
-            git pull origin main
-            
-            # Rebuild and restart the Docker container
+            cd /app/learn-from-news
             docker compose up -d --build
