@@ -20,8 +20,17 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Navigate to the folder (change the repository name below if necessary)
-            cd /app/learn-from-news
+            # Ensure the /app directory exists
+            mkdir -p /app
+            cd /app
+            
+            # If the repository hasn't been cloned yet, clone it
+            if [ ! -d "learn-from-news" ]; then
+              git clone https://github.com/liwei9981/learn-from-news.git
+            fi
+            
+            # Navigate to the folder
+            cd learn-from-news
             
             # Pull the latest code from GitHub
             git pull origin main
