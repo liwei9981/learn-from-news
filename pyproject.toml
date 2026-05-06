@@ -10,6 +10,7 @@ dependencies = [
     "feedparser>=6.0.11",
     "googlenewsdecoder>=0.1.7",
     "notebooklm-py[browser]>=0.3.4",
+    "google-genai>=1.0.0",
     "openai>=1.40.0",
     "playwright>=1.45.0",
     "pydantic>=2.7.0",

@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str | None = None
     openai_api_key: str | None = None
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-pro"
 
     news_api_key: str | None = None
     google_cse_api_key: str | None = None
@@ -33,7 +35,9 @@ class Settings(BaseSettings):
     default_language: str = "en"
     default_region: str = "US"
     default_max_news_results: int = Field(default=10, ge=1, le=20)
-    default_lookback_days: int = Field(default=7, ge=1, le=30)
+    default_lookback_days: int = Field(default=3, ge=1, le=30)
+    trending_lookback_days: int = Field(default=3, ge=1, le=7)
+    trending_query: str = "artificial intelligence technology business science geopolitics"
     podcast_target_minutes: int = Field(default=15, ge=5, le=30)
     allow_fallback_results: bool = False
     notebooklm_progress_interval_seconds: int = Field(default=300, ge=30, le=1800)

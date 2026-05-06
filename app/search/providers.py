@@ -16,8 +16,29 @@ from googlenewsdecoder import gnewsdecoder
 from app.config import Settings
 from app.models import Article, SearchRequest, SourceType
 from app.profile import clean_article_summary
+from app.search.ranking import canonical_domain
 
 logger = logging.getLogger(__name__)
+
+PAYWALL_DOMAINS: frozenset[str] = frozenset(
+    {
+        "ft.com",
+        "wsj.com",
+        "economist.com",
+        "nytimes.com",
+        "bloomberg.com",
+        "foreignpolicy.com",
+        "hbr.org",
+        "theatlantic.com",
+        "thetimes.co.uk",
+        "telegraph.co.uk",
+    }
+)
+
+
+def filter_paywalled(articles: list) -> list:
+    """Remove articles from known paywalled domains."""
+    return [a for a in articles if canonical_domain(str(a.url)) not in PAYWALL_DOMAINS]
 
 
 class SearchProvider(Protocol):

@@ -12,6 +12,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 
 from app.config import get_settings
 from app.learning.package import build_notebook_package
+from app.learning.points import extract_learning_points
 from app.linkedin import generate_linkedin_post
 from app.models import NotebookResult, SearchRequest
 from app.notebooklm import NotebookLMService
@@ -34,6 +35,7 @@ UPLOAD_TIMEOUTS = {
     "pool_timeout": 30,
 }
 DELIVERY_RETRIES = 3
+MAX_LEARNING_POINTS_SELECTED = 2
 
 
 @dataclass(frozen=True)
@@ -47,8 +49,8 @@ class DeliveryItem:
 
 MAIN_MENU = InlineKeyboardMarkup(
     [
-        [InlineKeyboardButton("Search News", callback_data="search")],
-        [InlineKeyboardButton("Personalized 7-Day Brief", callback_data="topic:AI technology Singapore China")],
+        [InlineKeyboardButton("🔍 Search News", callback_data="search")],
+        [InlineKeyboardButton("📈 Trending Now", callback_data="trending")],
     ]
 )
 
@@ -75,13 +77,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             raise
     data = query.data or ""
+
     if data == "search":
         context.user_data["awaiting_search"] = True
         await query.edit_message_text("Type a keyword or topic in English. Example: AI chips")
         return
+
+    if data == "trending":
+        await _run_trending_search(query.message, context)
+        return
+
     if data.startswith("topic:"):
         await _run_search(query.message, context, data.removeprefix("topic:"))
         return
+
     if data.startswith("select:"):
         index = int(data.removeprefix("select:"))
         articles = context.user_data.get("articles", [])
@@ -91,45 +100,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         context.user_data["selected_article"] = articles[index]
         await _show_article_actions(query.message, articles[index])
         return
+
     if data == "learn":
-        await _generate_learning_package(query.message, context)
+        await _start_learning_point_selection(query.message, context)
         return
-    if data.startswith("linkedin:"):
-        angle = data.removeprefix("linkedin:")
-        article = context.user_data.get("selected_article")
-        if not article:
-            await query.edit_message_text("Please select an article first.", reply_markup=MAIN_MENU)
-            return
-        infographic_path = context.user_data.get("notebooklm_infographic_path")
-        post = generate_linkedin_post(article, angle=angle, infographic_available=bool(infographic_path))
-        await query.message.reply_text(
-            post.text,
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "Copy Post Text",
-                            copy_text=CopyTextButton(text=post.text),
-                        )
-                    ],
-                    [InlineKeyboardButton("Open LinkedIn", url=post.share_url)],
-                    [
-                        InlineKeyboardButton("More Policy-Oriented", callback_data="linkedin:policy"),
-                        InlineKeyboardButton("More Technical", callback_data="linkedin:technical"),
-                    ],
-                    [InlineKeyboardButton("Start Over", callback_data="menu")],
-                ]
-            ),
-        )
-        if infographic_path and Path(infographic_path).exists():
-            path = Path(infographic_path)
-            await query.message.reply_document(
-                document=path,
-                filename=path.name,
-                caption="Attach this NotebookLM infographic to the LinkedIn post.",
-                **UPLOAD_TIMEOUTS,
-            )
+
+    if data.startswith("lp_toggle:"):
+        index = int(data.removeprefix("lp_toggle:"))
+        await _toggle_learning_point(query, context, index)
         return
+
+    if data == "lp_confirm":
+        await _confirm_learning_points(query.message, context)
+        return
+
+    if data == "linkedin":
+        await _send_linkedin_post(query.message, context)
+        return
+
     if data == "article_actions":
         article = context.user_data.get("selected_article")
         if not article:
@@ -137,19 +125,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         await _show_article_actions(query.message, article)
         return
+
     if data == "menu":
         await query.edit_message_text("What would you like to learn from today?", reply_markup=MAIN_MENU)
+        return
+
+    if data == "stop":
+        await query.edit_message_reply_markup(reply_markup=None)
+        await query.message.reply_text("Session ended. Type /start to begin again.")
+        return
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.user_data.pop("awaiting_search", False):
         await _run_search(update.effective_message, context, update.effective_message.text)
         return
-    await update.effective_message.reply_text("Use Search News or Personalized 7-Day Brief to begin.", reply_markup=MAIN_MENU)
+    await update.effective_message.reply_text(
+        "Use Search News or Trending Now to begin.", reply_markup=MAIN_MENU
+    )
 
+
+# ── Search ────────────────────────────────────────────────────────────────────
 
 async def _run_search(message, context: ContextTypes.DEFAULT_TYPE, topic: str) -> None:
-    await message.reply_text(f"Searching the past 7 days for: {topic}")
+    await message.reply_text(f"Searching the past 3 days for: {topic}")
     settings = get_settings()
     bundle = await NewsSearchService().search(
         SearchRequest(
@@ -160,6 +159,20 @@ async def _run_search(message, context: ContextTypes.DEFAULT_TYPE, topic: str) -
             lookback_days=settings.default_lookback_days,
         )
     )
+    await _display_article_list(message, context, bundle, label=f"Top results for \"{topic}\":")
+
+
+async def _run_trending_search(message, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await message.reply_text("Fetching trending news from the past 3 days...")
+    bundle = await NewsSearchService().search_trending()
+    combined = [*bundle.top_news, *bundle.deep_context]
+    if not combined:
+        await message.reply_text("No trending results found right now. Try searching by keyword.", reply_markup=MAIN_MENU)
+        return
+    await _display_article_list(message, context, bundle, label="📈 Trending now — top stories from the past 3 days:")
+
+
+async def _display_article_list(message, context: ContextTypes.DEFAULT_TYPE, bundle, label: str) -> None:
     combined = [*bundle.top_news, *bundle.deep_context]
     articles = [item.article for item in combined]
     context.user_data["articles"] = articles
@@ -171,11 +184,10 @@ async def _run_search(message, context: ContextTypes.DEFAULT_TYPE, topic: str) -
         for idx, article in enumerate(articles[:10])
     ]
     buttons.append([InlineKeyboardButton("Start Over", callback_data="menu")])
-    await message.reply_text(
-        "Top 7-day results, ranked for your AI, technology, public-sector, and China-Singapore interests:",
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
+    await message.reply_text(label, reply_markup=InlineKeyboardMarkup(buttons))
 
+
+# ── Article actions ───────────────────────────────────────────────────────────
 
 async def _show_article_actions(message, article) -> None:
     summary = summarize_article_for_telegram(article.title, article.summary)
@@ -189,27 +201,114 @@ async def _show_article_actions(message, article) -> None:
         text,
         reply_markup=InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("Generate NotebookLM Learning Pack", callback_data="learn")],
+                [InlineKeyboardButton("🎓 Build Learning Pack", callback_data="learn")],
                 [InlineKeyboardButton("Start Over", callback_data="menu")],
             ]
         ),
     )
 
 
-async def _generate_learning_package(message, context: ContextTypes.DEFAULT_TYPE) -> None:
+# ── Learning point selection ──────────────────────────────────────────────────
+
+async def _start_learning_point_selection(message, context: ContextTypes.DEFAULT_TYPE) -> None:
     article = context.user_data.get("selected_article")
-    articles = context.user_data.get("articles", [])
     if not article:
         await message.reply_text("Please select an article first.", reply_markup=MAIN_MENU)
         return
+
+    await message.reply_text("Analysing article to identify key learning points...")
+    settings = get_settings()
+    points = await extract_learning_points(article, settings.gemini_api_key, settings.gemini_model)
+    context.user_data["learning_points"] = points
+    context.user_data["selected_lp"] = set()
+    await message.reply_text(
+        _build_lp_text(points, set()),
+        reply_markup=_build_lp_keyboard(points, set()),
+    )
+
+
+async def _toggle_learning_point(query, context: ContextTypes.DEFAULT_TYPE, index: int) -> None:
+    selected: set[int] = set(context.user_data.get("selected_lp", set()))
+    if index in selected:
+        selected.discard(index)
+    elif len(selected) < MAX_LEARNING_POINTS_SELECTED:
+        selected.add(index)
+    context.user_data["selected_lp"] = selected
+
+    points = context.user_data.get("learning_points", [])
+    try:
+        await query.edit_message_text(
+            _build_lp_text(points, selected),
+            reply_markup=_build_lp_keyboard(points, selected),
+        )
+    except BadRequest as exc:
+        if "Message is not modified" in str(exc):
+            pass
+        else:
+            raise
+
+
+async def _confirm_learning_points(message, context: ContextTypes.DEFAULT_TYPE) -> None:
+    selected_indices: set[int] = context.user_data.get("selected_lp", set())
+    all_points: list[str] = context.user_data.get("learning_points", [])
+    selected_points = [all_points[i] for i in sorted(selected_indices) if i < len(all_points)]
+    if not selected_points:
+        await message.reply_text("Please select at least one learning point first.")
+        return
+    context.user_data["selected_learning_points"] = selected_points
+    await _generate_learning_package(message, context)
+
+
+def _build_lp_text(points: list[str], selected: set[int]) -> str:
+    lines = []
+    for i, point in enumerate(points):
+        icon = "✅" if i in selected else "○"
+        lines.append(f"{icon} {i + 1}. {point}")
+    text = "What would you like to learn from this news?\nTap to select up to 2 points.\n\n" + "\n".join(lines)
+    if selected:
+        text += f"\n\nSelected: {len(selected)}/{MAX_LEARNING_POINTS_SELECTED}"
+    return text
+
+
+def _build_lp_keyboard(points: list[str], selected: set[int]) -> InlineKeyboardMarkup:
+    number_row = [
+        InlineKeyboardButton(
+            f"{'✅' if i in selected else '○'} {i + 1}",
+            callback_data=f"lp_toggle:{i}",
+        )
+        for i in range(len(points))
+    ]
+    buttons = [number_row]
+    if selected:
+        buttons.append([InlineKeyboardButton("🎓 Generate Learning Pack", callback_data="lp_confirm")])
+    buttons.append([InlineKeyboardButton("« Back", callback_data="article_actions")])
+    return InlineKeyboardMarkup(buttons)
+
+
+# ── Learning package generation ───────────────────────────────────────────────
+
+async def _generate_learning_package(message, context: ContextTypes.DEFAULT_TYPE) -> None:
+    article = context.user_data.get("selected_article")
+    articles = context.user_data.get("articles", [])
+    selected_learning_points: list[str] = context.user_data.get("selected_learning_points", [])
+
+    if not article:
+        await message.reply_text("Please select an article first.", reply_markup=MAIN_MENU)
+        return
+
     related = [candidate for candidate in articles if str(candidate.url) != str(article.url)][:8]
-    package = build_notebook_package(article, related)
+    package = build_notebook_package(article, related, selected_learning_points)
     settings = get_settings()
     context.user_data.pop("notebooklm_infographic_path", None)
+
+    lp_summary = ", ".join(f'"{lp}"' for lp in selected_learning_points) if selected_learning_points else "general overview"
     await message.reply_text(
-        "NotebookLM generation has started. The podcast, audio brief, and infographic often take 10-15 minutes. "
+        f"NotebookLM generation has started.\n\n"
+        f"Learning focus: {lp_summary}\n\n"
+        "The podcast and infographic often take 10–15 minutes. "
         "I will send a progress update every 5 minutes while this is running."
     )
+
     progress_task = asyncio.create_task(
         _send_notebooklm_progress(message, settings.notebooklm_progress_interval_seconds)
     )
@@ -217,8 +316,9 @@ async def _generate_learning_package(message, context: ContextTypes.DEFAULT_TYPE
         result = await NotebookLMService().create_learning_notebook(package)
     finally:
         progress_task.cancel()
+
     await message.reply_text(
-        "NotebookLM learning pack is ready. Sending the infographic, audio brief, and podcast now.",
+        "NotebookLM learning pack is ready. Sending the podcast and infographic now.",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("Open NotebookLM", url=result.notebook_url or "https://notebooklm.google.com")]]
         ),
@@ -231,41 +331,67 @@ async def _generate_learning_package(message, context: ContextTypes.DEFAULT_TYPE
     status = f"Done. Sent: {', '.join(sent) if sent else 'none'}."
     if failed:
         status += f"\nNot sent to Telegram: {', '.join(failed)}. The files are still saved in Output files."
+
     await message.reply_text(
         status,
         reply_markup=InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("Open NotebookLM", url=result.notebook_url or "https://notebooklm.google.com")],
-                [InlineKeyboardButton("Create LinkedIn Post", callback_data="linkedin:balanced")],
+                [InlineKeyboardButton("📝 Create LinkedIn Post", callback_data="linkedin")],
                 [InlineKeyboardButton("Start Over", callback_data="menu")],
             ]
         ),
     )
 
 
+# ── LinkedIn post ─────────────────────────────────────────────────────────────
+
+async def _send_linkedin_post(message, context: ContextTypes.DEFAULT_TYPE) -> None:
+    article = context.user_data.get("selected_article")
+    selected_learning_points: list[str] = context.user_data.get("selected_learning_points", [])
+    if not article:
+        await message.reply_text("Please select an article first.", reply_markup=MAIN_MENU)
+        return
+
+    settings = get_settings()
+    post = await generate_linkedin_post(
+        article,
+        selected_learning_points,
+        settings.gemini_api_key,
+        settings.gemini_model,
+    )
+    # Send as a clean, label-free message — ready to copy directly to LinkedIn
+    await message.reply_text(
+        post,
+        reply_markup=InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("Start Over", callback_data="menu")],
+                [InlineKeyboardButton("Stop", callback_data="stop")],
+            ]
+        ),
+    )
+
+
+# ── File delivery ─────────────────────────────────────────────────────────────
+
 def _build_delivery_items(result: NotebookResult) -> list[DeliveryItem]:
-    return [
-        DeliveryItem(
+    items = []
+    if result.infographic_path:
+        items.append(DeliveryItem(
             label="infographic",
-            path=Path(result.infographic_path).absolute() if result.infographic_path else None,
+            path=Path(result.infographic_path).absolute(),
             kind="photo",
             caption="NotebookLM infographic.",
-        ),
-        DeliveryItem(
-            label="audio brief",
-            path=Path(result.audio_brief_path).absolute() if result.audio_brief_path else None,
-            kind="audio",
-            caption="NotebookLM audio brief.",
-            title="NotebookLM audio brief",
-        ),
-        DeliveryItem(
+        ))
+    if result.audio_path:
+        items.append(DeliveryItem(
             label="podcast",
-            path=Path(result.audio_path).absolute() if result.audio_path else None,
+            path=Path(result.audio_path).absolute(),
             kind="audio",
             caption="NotebookLM podcast / Audio Overview.",
             title="NotebookLM podcast",
-        ),
-    ]
+        ))
+    return items
 
 
 async def _deliver_learning_package(
@@ -313,7 +439,6 @@ async def _send_delivery_item(
 ) -> bool:
     if not item.path:
         return False
-
     if item.kind == "photo":
         return await _send_infographic(context, chat_id, item.path, item.caption)
     if item.kind == "audio":
@@ -401,7 +526,7 @@ async def _send_notebooklm_progress(message, interval_seconds: int) -> None:
             minutes = elapsed // 60
             await message.reply_text(
                 f"Still working in NotebookLM. Elapsed time: about {minutes} minutes. "
-                "Podcast, audio brief, and infographic generation can take 10-15 minutes, especially with multiple sources."
+                "Podcast and infographic generation can take 10–15 minutes, especially with multiple sources."
             )
     except asyncio.CancelledError:
         return

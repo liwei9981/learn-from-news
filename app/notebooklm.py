@@ -168,7 +168,7 @@ class NotebookLMService:
         infographic_path = output_dir / f"{slug}-infographic.png"
 
         notes: list[str] = []
-        podcast_start, brief_start, infographic_start = await asyncio.gather(
+        podcast_start, infographic_start = await asyncio.gather(
             self._start_artifact(
                 "podcast",
                 client.artifacts.generate_audio(
@@ -178,17 +178,6 @@ class NotebookLMService:
                     audio_format=enums["AudioFormat"].DEEP_DIVE,
                     audio_length=_preferred_audio_length(enums["AudioLength"]),
                     instructions=_audio_instructions(package),
-                ),
-            ),
-            self._start_artifact(
-                "audio brief",
-                client.artifacts.generate_audio(
-                    notebook_id,
-                    source_ids=None,
-                    language=package.language,
-                    audio_format=enums["AudioFormat"].BRIEF,
-                    audio_length=_short_audio_length(enums["AudioLength"]),
-                    instructions=_audio_brief_instructions(package),
                 ),
             ),
             self._start_artifact(
@@ -221,21 +210,6 @@ class NotebookLMService:
             )
         else:
             notes.append("podcast did not start")
-        if brief_start and getattr(brief_start, "task_id", None):
-            wait_tasks.append(
-                (
-                    "audio brief",
-                    self._wait_and_download_audio(
-                        client,
-                        notebook_id,
-                        brief_start.task_id,
-                        audio_brief_path,
-                        "audio brief",
-                    ),
-                )
-            )
-        else:
-            notes.append("audio brief did not start")
         if infographic_start and getattr(infographic_start, "task_id", None):
             wait_tasks.append(
                 (
@@ -273,22 +247,20 @@ class NotebookLMService:
             else:
                 downloaded[label] = result
 
-        podcast_result = downloaded["podcast"]
-        brief_result = downloaded["audio brief"]
-        infographic_result = downloaded["infographic"]
+        podcast_result = downloaded.get("podcast")
+        infographic_result = downloaded.get("infographic")
 
         completed = [
             name
             for name, path in (
                 ("podcast", podcast_result),
-                ("audio brief", brief_result),
                 ("infographic", infographic_result),
             )
             if path
         ]
         return {
             "podcast_path": podcast_result,
-            "audio_brief_path": brief_result,
+            "audio_brief_path": None,
             "infographic_path": infographic_result,
             "summary": "; ".join(
                 [
@@ -532,44 +504,74 @@ class NotebookLMService:
 
 def _audio_instructions(package: NotebookPackage) -> str:
     settings = get_settings()
+    lp_list = package.learning_points
+    lp_text = ""
+    if lp_list:
+        items = ", ".join(lp_list)
+        lp_text = (
+            f"\n\nSelected learning points: {items}\n"
+            "For each learning point, dedicate a segment: explain the concept clearly, "
+            "provide historical context or background, and connect it to the news."
+        )
     return (
-        f"Create an English Deep Dive podcast of about {settings.podcast_target_minutes} minutes. "
-        "Make it conversational, sharp, and suitable for a senior technology and policy audience. "
-        "Focus on why the news matters, the key concepts behind it, AI deployment implications, "
-        "governance risks, and China-Singapore technology collaboration relevance. "
-        "Avoid generic summary; explain the strategic signal behind the article."
+        f"Create an English Deep Dive podcast of exactly {settings.podcast_target_minutes} minutes. "
+        "Structure: "
+        "(1) News Brief — 2 minutes covering what happened and why it matters. "
+        "(2) Learning Point Deep Dive — one segment per selected learning point, "
+        "each explaining the concept, providing background, and connecting it to the news. "
+        "(3) Closing — 1 minute on how the learning points relate to the bigger picture. "
+        "Tone: conversational, intellectually engaging, suitable for a senior technology "
+        "and policy professional. Avoid generic commentary; give sharp, grounded analysis."
+        f"{lp_text}"
     )
+
 
 
 def _infographic_instructions(package: NotebookPackage) -> str:
+    lp_list = package.learning_points
+    lp_text = ""
+    if lp_list:
+        items = ", ".join(f'"{lp}"' for lp in lp_list)
+        lp_text = (
+            f" Include one dedicated block per learning point ({items}): "
+            "a clear heading, a 2-sentence explanation, and a 1-sentence connection to the news."
+        )
     return (
-        "Create a portrait-oriented, concise, clear, executive-friendly infographic in English. "
-        "Use no more than six blocks. Explain the news, why it matters, the key concepts, "
-        "technology implications, policy/governance implications, and China-Singapore relevance. "
-        "Keep the wording simple and easy to understand. Use concise content density."
+        "Create a portrait-oriented, concise, professional infographic in English. "
+        "Use the CONCISE detail level. "
+        "Structure (max 6 blocks total): "
+        "Section 1 — News Brief: Block 1: What Happened (2-3 sentences). "
+        "Block 2: Why It Matters (2-3 sentences). "
+        "Section 2 — Learning Points: one block per selected learning point, "
+        "each with a clear heading, a 2-sentence explanation, and a 1-sentence connection to the news. "
+        f"Keep wording simple, clear, and executive-friendly. No dense paragraphs.{lp_text}"
     )
 
-
-def _audio_brief_instructions(package: NotebookPackage) -> str:
-    return (
-        "Create a short English audio brief for a busy senior technology and policy audience. "
-        "Keep it concise and practical: what happened, why it matters, the core implication, "
-        "and one sharp China-Singapore AI collaboration angle. This should be much shorter "
-        "than the Deep Dive podcast."
-    )
 
 
 def _research_query(package: NotebookPackage) -> str:
     article = package.primary_article
+    lp_list = package.learning_points
     summary = " ".join((article.summary or "").split())
+    lp_section = ""
+    if lp_list:
+        items = "\n".join(f"- {lp}" for lp in lp_list)
+        lp_section = (
+            f"\n\nLearning Points to Research:\n{items}\n\n"
+            "For each learning point, find authoritative, open-access sources that:\n"
+            "- Explain the concept, person, or event in depth\n"
+            "- Provide historical context or background\n"
+            "- Connect it to the news article\n"
+            "Prioritise high-signal, non-paywalled sources."
+        )
     return (
-        "Research this news story efficiently and find the most useful sources for a senior "
-        "technology and policy learner based in Singapore, with a focus on AI, governance, "
-        "deployment, and China-Singapore technology collaboration. Prioritize concise, high-signal "
-        "sources over quantity.\n\n"
-        f"Title: {article.title}\n"
+        "Research this news story and the specific learning points the learner has chosen, "
+        "for a senior technology and policy professional based in Singapore "
+        "with a focus on AI, governance, and China-Singapore technology collaboration.\n\n"
+        f"News: {article.title}\n"
         f"Summary: {summary[:1200]}\n"
-        f"Original URL, if useful: {article.url}"
+        f"Source: {article.url}"
+        f"{lp_section}"
     )
 
 

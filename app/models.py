@@ -51,6 +51,7 @@ class NotebookPackage(BaseModel):
     sources: list[Article]
     guide_markdown: str
     language: str = "en"
+    learning_points: list[str] = Field(default_factory=list)
 
 
 class NotebookResult(BaseModel):

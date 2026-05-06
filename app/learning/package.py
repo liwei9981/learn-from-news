@@ -3,35 +3,66 @@ from app.models import Article, NotebookPackage
 from app.profile import PERSONA_SUMMARY
 
 
-def build_notebook_package(primary_article: Article, related_sources: list[Article], language: str = "en") -> NotebookPackage:
+def build_notebook_package(
+    primary_article: Article,
+    related_sources: list[Article],
+    learning_points: list[str] | None = None,
+    language: str = "en",
+) -> NotebookPackage:
+    lp = learning_points or []
     sources = [primary_article, *related_sources]
-    guide = _build_guide(primary_article, related_sources)
+    guide = _build_guide(primary_article, related_sources, lp)
     return NotebookPackage(
         title=f"Learning Pack: {primary_article.title[:80]}",
         primary_article=primary_article,
         sources=sources,
         guide_markdown=guide,
         language=language,
+        learning_points=lp,
     )
 
 
-def _build_guide(primary_article: Article, related_sources: list[Article]) -> str:
+def _build_guide(
+    primary_article: Article,
+    related_sources: list[Article],
+    learning_points: list[str],
+) -> str:
     settings = get_settings()
-    source_lines = "\n".join(f"- {source.title} ({source.source}): {source.url}" for source in related_sources)
+    source_lines = "\n".join(
+        f"- {s.title} ({s.source}): {s.url}" for s in related_sources
+    )
+    lp_lines = (
+        "\n".join(f"{i + 1}. {lp}" for i, lp in enumerate(learning_points))
+        if learning_points
+        else "(no specific learning points selected)"
+    )
+    lp_objectives = ""
+    if learning_points:
+        objectives = "\n".join(
+            f"- **{lp}**: explain what it is, provide background and historical context, "
+            f"and connect it clearly to the news article."
+            for lp in learning_points
+        )
+        lp_objectives = f"\n\nFor each selected learning point:\n{objectives}"
+
     return f"""# Learning Guide
 
-## Primary Article
+## Primary News Article
 
-{primary_article.title}
+**{primary_article.title}**
 
 {primary_article.summary}
 
-## What to Learn
+Source: {primary_article.url}
 
-- The core event or development behind the article.
-- The strategic, technical, market, and policy concepts that explain why it matters.
-- Why this matters to a Singapore-based technology leader working on China-Singapore AI collaboration.
-- The implications for AI deployment, governance, public-sector transformation, and regional technology cooperation.
+## Selected Learning Points
+
+The learner has chosen these specific points to study in depth:
+
+{lp_lines}
+
+## Learning Objectives
+{lp_objectives}
 
 ## Learner Context
 
@@ -39,17 +70,14 @@ def _build_guide(primary_article: Article, related_sources: list[Article]) -> st
 
 ## Output Requirements
 
-- Podcast / Audio Overview: target length around {settings.podcast_target_minutes} minutes, in English, conversational but executive-level.
-- Infographic: concise, clear, easy to understand, with no more than 6 key blocks.
-- Avoid generic AI commentary. Give sharp, grounded analysis based on the supplied sources.
-
-## Suggested NotebookLM Prompts
-
-1. Explain the key concepts behind this article for a senior technology and policy audience.
-2. Create a concise briefing with the facts, implications, risks, and open questions.
-3. Generate an Audio Overview in English, around {settings.podcast_target_minutes} minutes, with a sharp focus on AI deployment, governance, and cross-border collaboration.
-4. Create a concise infographic outline with 5-6 blocks, clear labels, and simple explanations.
-5. Suggest three LinkedIn-ready viewpoints that connect this topic to China-Singapore technology cooperation.
+- **Podcast / Audio Overview**: target {settings.podcast_target_minutes} minutes, English, conversational, executive-level.
+  - Start with a 2-minute news brief (what happened, why it matters)
+  - Then deep dive into each selected learning point with background and context
+  - Close with how the learning points connect to the bigger picture
+- **Infographic**: portrait-oriented, CONCISE detail level, max 6 blocks:
+  - Section 1 — News Brief: (a) What Happened, (b) Why It Matters
+  - Section 2 — Learning Points: one block per selected point with a clear heading,
+    2-sentence explanation, and 1-sentence connection to the news
 
 ## Additional Sources
 

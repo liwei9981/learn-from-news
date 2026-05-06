@@ -1,67 +1,96 @@
-from app.models import Article, LinkedInPost
-from app.profile import clean_article_summary
+from __future__ import annotations
 
+import logging
 
-USER_PERSONA = (
-    "The author is China-born, has lived in Singapore for 26 years, "
-    "has deep technology experience, previously worked for Singapore's government technology sector, "
-    "and now advances China-Singapore technology collaboration, especially in AI."
+from app.models import Article
+
+logger = logging.getLogger(__name__)
+
+_SYSTEM_PROMPT = (
+    "You are a professional who shares concise, insightful LinkedIn posts about technology "
+    "and policy news. Write in a natural, curious, first-person tone. Keep it short and human."
 )
 
+_USER_PROMPT_TMPL = """\
+Write a LinkedIn post about this news article.
 
-def generate_linkedin_post(
+Requirements:
+- 2 to 3 sentences only — short, concise, and friendly
+- Naturally share the news and bring up the selected learning points below
+- Write with genuine curiosity and a good learning attitude
+- End by inviting people to read the article (woven in naturally, not a separate line)
+- No hashtags
+- Do NOT include the article URL (it will be added separately)
+- First person, natural human tone
+
+News title: {title}
+Summary: {summary}
+
+Learning points to highlight:
+{learning_points_text}\
+"""
+
+
+async def generate_linkedin_post(
     article: Article,
-    angle: str = "balanced",
-    infographic_available: bool = False,
-) -> LinkedInPost:
-    text = _template_post(article, angle, infographic_available)
-    share_url = "https://www.linkedin.com/feed/"
-    return LinkedInPost(text=text, article_url=article.url, share_url=share_url)
+    learning_points: list[str],
+    api_key: str | None,
+    model: str = "gemini-2.5-pro-preview-05-06",
+) -> str:
+    """Generate a clean LinkedIn post ready to copy-paste. Returns post text + URL."""
+    post_body = ""
+    if api_key:
+        try:
+            post_body = await _gemini_post(article, learning_points, api_key, model)
+        except Exception as exc:
+            logger.warning("Gemini LinkedIn post failed, using fallback: %s: %s", type(exc).__name__, exc)
+
+    if not post_body:
+        post_body = _fallback_post(article, learning_points)
+
+    return f"{post_body}\n\n{article.url}"
 
 
-def _template_post(article: Article, angle: str, infographic_available: bool) -> str:
-    summary = _article_summary(article)
-    if angle == "policy":
-        opinion = (
-            "My view: the real policy signal is that AI advantage is moving from model performance "
-            "to trusted execution. The winners will be the institutions that can align governance, "
-            "infrastructure, and deployment speed."
-        )
-    elif angle == "technical":
-        opinion = (
-            "My view: the technical signal is not only what the technology can do, but how fast it "
-            "can be integrated into real workflows. In AI, execution discipline is becoming as "
-            "important as invention."
-        )
-    else:
-        opinion = (
-            "My view: this is another sign that AI is becoming core innovation infrastructure, "
-            "not just a headline topic. The real question is how quickly it can become trusted, "
-            "deployable capability across markets and borders."
-        )
+async def _gemini_post(
+    article: Article,
+    learning_points: list[str],
+    api_key: str,
+    model: str,
+) -> str:
+    from google import genai  # type: ignore[import]
 
-    infographic_line = (
-        "I also attached a concise NotebookLM infographic from a quick search around the main topic."
-        if infographic_available
-        else "I would also recommend making a quick infographic summary around the main topic before sharing it internally."
+    client = genai.Client(api_key=api_key)
+    lp_text = "\n".join(f"- {lp}" for lp in learning_points) if learning_points else "- General interest in the news"
+    prompt = _USER_PROMPT_TMPL.format(
+        title=article.title,
+        summary=(article.summary or "")[:800],
+        learning_points_text=lp_text,
     )
+    response = await client.aio.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=genai.types.GenerateContentConfig(
+            system_instruction=_SYSTEM_PROMPT,
+        ),
+    )
+    text = (response.text or "").strip()
+    # Remove any accidental URL the model might include
+    lines = [ln for ln in text.splitlines() if "http" not in ln.lower()]
+    return " ".join(" ".join(lines).split())
+
+
+def _fallback_post(article: Article, learning_points: list[str]) -> str:
+    """Simple string-assembly fallback when Gemini is unavailable."""
+    title = article.title.rstrip(".")
+    if learning_points:
+        lp_phrase = " and ".join(f'"{lp}"' for lp in learning_points[:2])
+        return (
+            f"Came across this piece on {title}. "
+            f"What caught my attention was the discussion around {lp_phrase} — "
+            f"worth a read if you're following how these ideas are shaping the field."
+        )
     return (
-        f"{summary}\n\n"
-        f"{opinion}\n\n"
-        f"Read the article here: {article.url}\n"
-        f"{infographic_line}"
+        f"Interesting read on {title}. "
+        f"The implications for technology and policy are worth exploring — "
+        f"check it out if you're curious about where this is heading."
     )
-
-
-def _article_summary(article: Article) -> str:
-    title = clean_article_summary(article.title)
-    summary = clean_article_summary(article.summary or "")
-    if not summary:
-        return f"This article reports on {title}."
-
-    first_sentence = summary.split(". ")[0].strip()
-    if first_sentence and not first_sentence.endswith("."):
-        first_sentence += "."
-    if len(first_sentence) > 260:
-        first_sentence = first_sentence[:257].rstrip() + "..."
-    return f"This article reports on {title}. {first_sentence}"
