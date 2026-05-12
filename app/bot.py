@@ -201,7 +201,7 @@ async def _show_article_actions(message, article) -> None:
         text,
         reply_markup=InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton("🎓 Build Learning Pack", callback_data="learn")],
+                [InlineKeyboardButton("🎓 Learning Points", callback_data="learn")],
                 [InlineKeyboardButton("Start Over", callback_data="menu")],
             ]
         ),

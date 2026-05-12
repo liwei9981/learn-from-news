@@ -9,6 +9,7 @@ class NewsSearchService:
         settings = get_settings()
         providers = build_providers(settings)
         articles = await run_providers(providers, request)
+        articles = filter_paywalled(articles)
         scored = score_articles(articles, request.query)
         top_news, deep_context = split_bundle(scored, request.max_results)
         return SearchBundle(query=request.query, top_news=top_news, deep_context=deep_context)
