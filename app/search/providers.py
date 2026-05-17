@@ -22,16 +22,46 @@ logger = logging.getLogger(__name__)
 
 PAYWALL_DOMAINS: frozenset[str] = frozenset(
     {
+        # Major newspapers
         "ft.com",
         "wsj.com",
-        "economist.com",
         "nytimes.com",
-        "bloomberg.com",
-        "foreignpolicy.com",
-        "hbr.org",
-        "theatlantic.com",
+        "washingtonpost.com",
         "thetimes.co.uk",
         "telegraph.co.uk",
+        "theglobeandmail.com",
+        "afr.com",
+        "scmp.com",
+        "straitstimes.com",
+        "japantimes.co.jp",
+        "nikkei.com",
+        # Business & finance
+        "bloomberg.com",
+        "economist.com",
+        "barrons.com",
+        "marketwatch.com",
+        "fortune.com",
+        "businessinsider.com",
+        "insider.com",
+        # Policy & analysis
+        "foreignpolicy.com",
+        "foreignaffairs.com",
+        "hbr.org",
+        "theatlantic.com",
+        "newyorker.com",
+        "thediplomatmagazine.com",
+        # Tech media with paywalls
+        "theinformation.com",
+        "wired.com",
+        "technologyreview.com",
+        "semafor.com",
+        # Other paywalled sources
+        "theathletic.com",
+        "wsj.net",
+        "leparisien.fr",
+        "lemonde.fr",
+        "handelsblatt.com",
+        "seekingalpha.com",
     }
 )
 
