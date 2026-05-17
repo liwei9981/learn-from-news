@@ -1,4 +1,3 @@
-from app.config import get_settings
 from app.models import Article, NotebookPackage
 from app.profile import PERSONA_SUMMARY
 
@@ -27,7 +26,7 @@ def _build_guide(
     related_sources: list[Article],
     learning_points: list[str],
 ) -> str:
-    settings = get_settings()
+
     source_lines = "\n".join(
         f"- {s.title} ({s.source}): {s.url}" for s in related_sources
     )
@@ -70,11 +69,7 @@ The learner has chosen these specific points to study in depth:
 
 ## Output Requirements
 
-- **Podcast / Audio Overview**: target {settings.podcast_target_minutes} minutes, English, conversational, executive-level.
-  - Start with a 2-minute news brief (what happened, why it matters)
-  - Then deep dive into each selected learning point with background and context
-  - Close with how the learning points connect to the bigger picture
-- **Infographic**: portrait-oriented, CONCISE detail level, max 6 blocks:
+- **Infographic**: portrait-oriented, STANDARD detail level, max 6 blocks:
   - Section 1 — News Brief: (a) What Happened, (b) Why It Matters
   - Section 2 — Learning Points: one block per selected point with a clear heading,
     2-sentence explanation, and 1-sentence connection to the news

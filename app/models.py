@@ -57,15 +57,10 @@ class NotebookPackage(BaseModel):
 class NotebookResult(BaseModel):
     notebook_id: str | None = None
     notebook_url: str | None = None
-    audio_url: str | None = None
-    audio_path: str | None = None
-    audio_brief_url: str | None = None
-    audio_brief_path: str | None = None
     infographic_url: str | None = None
     infographic_path: str | None = None
     status: str = "prepared"
     notes: str = ""
-    podcast_target_minutes: int = 15
 
 
 class LinkedInPost(BaseModel):

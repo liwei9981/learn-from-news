@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     notebooklm_base_url: str = "https://notebooklm.google.com"
     notebooklm_enabled: bool = False
     notebooklm_storage_path: str | None = None
-    notebooklm_audio_timeout_seconds: int = Field(default=1800, ge=60, le=3600)
+
     notebooklm_infographic_timeout_seconds: int = Field(default=1800, ge=60, le=3600)
     notebooklm_source_wait_seconds: int = Field(default=180, ge=30, le=600)
     notebooklm_research_timeout_seconds: int = Field(default=900, ge=60, le=3600)
@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     default_lookback_days: int = Field(default=3, ge=1, le=30)
     trending_lookback_days: int = Field(default=3, ge=1, le=7)
     trending_query: str = "artificial intelligence technology business science geopolitics"
-    podcast_target_minutes: int = Field(default=15, ge=5, le=30)
+
     allow_fallback_results: bool = False
     notebooklm_progress_interval_seconds: int = Field(default=300, ge=30, le=1800)
 

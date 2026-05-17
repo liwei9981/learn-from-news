@@ -305,7 +305,7 @@ async def _generate_learning_package(message, context: ContextTypes.DEFAULT_TYPE
     await message.reply_text(
         f"NotebookLM generation has started.\n\n"
         f"Learning focus: {lp_summary}\n\n"
-        "The podcast and infographic often take 10–15 minutes. "
+        "The infographic often takes 5–10 minutes. "
         "I will send a progress update every 5 minutes while this is running."
     )
 
@@ -318,7 +318,7 @@ async def _generate_learning_package(message, context: ContextTypes.DEFAULT_TYPE
         progress_task.cancel()
 
     await message.reply_text(
-        "NotebookLM learning pack is ready. Sending the podcast and infographic now.",
+        "NotebookLM learning pack is ready. Sending the infographic now.",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("Open NotebookLM", url=result.notebook_url or "https://notebooklm.google.com")]]
         ),
@@ -383,14 +383,6 @@ def _build_delivery_items(result: NotebookResult) -> list[DeliveryItem]:
             kind="photo",
             caption="NotebookLM infographic.",
         ))
-    if result.audio_path:
-        items.append(DeliveryItem(
-            label="podcast",
-            path=Path(result.audio_path).absolute(),
-            kind="audio",
-            caption="NotebookLM podcast / Audio Overview.",
-            title="NotebookLM podcast",
-        ))
     return items
 
 
@@ -441,8 +433,6 @@ async def _send_delivery_item(
         return False
     if item.kind == "photo":
         return await _send_infographic(context, chat_id, item.path, item.caption)
-    if item.kind == "audio":
-        return await _send_audio_file(context, chat_id, item.path, item.caption, item.title)
     logger.warning("Unsupported delivery item type for %s: %s", item.label, item.kind)
     return False
 
@@ -480,41 +470,6 @@ async def _send_infographic(
         return False
 
 
-async def _send_audio_file(
-    context: ContextTypes.DEFAULT_TYPE,
-    chat_id: int,
-    path: Path,
-    caption: str,
-    title: str | None,
-) -> bool:
-    try:
-        logger.info("Sending audio file from %s", path)
-        await context.bot.send_audio(
-            chat_id=chat_id,
-            audio=path,
-            filename=path.name,
-            title=title,
-            caption=caption,
-            **UPLOAD_TIMEOUTS,
-        )
-        return True
-    except TimedOut as exc:
-        logger.warning("Timed out sending audio %s, retrying as document: %s", path, exc)
-    except (TelegramError, OSError) as exc:
-        logger.warning("Failed to send audio %s, retrying as document: %s: %s", path, type(exc).__name__, exc)
-
-    try:
-        await context.bot.send_document(
-            chat_id=chat_id,
-            document=path,
-            filename=path.name,
-            caption=caption,
-            **UPLOAD_TIMEOUTS,
-        )
-        return True
-    except (TelegramError, OSError) as exc:
-        logger.warning("Failed to send audio document %s: %s: %s", path, type(exc).__name__, exc)
-        return False
 
 
 async def _send_notebooklm_progress(message, interval_seconds: int) -> None:
@@ -526,7 +481,7 @@ async def _send_notebooklm_progress(message, interval_seconds: int) -> None:
             minutes = elapsed // 60
             await message.reply_text(
                 f"Still working in NotebookLM. Elapsed time: about {minutes} minutes. "
-                "Podcast and infographic generation can take 10–15 minutes, especially with multiple sources."
+                "Infographic generation can take 5–10 minutes, especially with multiple sources."
             )
     except asyncio.CancelledError:
         return

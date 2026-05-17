@@ -32,7 +32,6 @@ class NotebookLMService:
                     "NotebookLM connector is disabled. Set NOTEBOOKLM_ENABLED=true after "
                     "the stored Google/NotebookLM session is prepared on the server."
                 ),
-                podcast_target_minutes=settings.podcast_target_minutes,
             )
 
         try:
@@ -42,20 +41,16 @@ class NotebookLMService:
                 status="notebooklm_library_missing",
                 notebook_url=settings.notebooklm_base_url,
                 notes=f"Install notebooklm-py[browser] to enable NotebookLM integration: {exc}",
-                podcast_target_minutes=settings.podcast_target_minutes,
             )
         except Exception as exc:  # pragma: no cover - depends on external NotebookLM session
             return NotebookResult(
                 status="notebooklm_failed",
                 notebook_url=settings.notebooklm_base_url,
                 notes=f"NotebookLM task failed: {type(exc).__name__}: {exc}",
-                podcast_target_minutes=settings.podcast_target_minutes,
             )
 
     async def _create_with_notebooklm_py(self, package: NotebookPackage) -> NotebookResult:
         from notebooklm import (
-            AudioFormat,
-            AudioLength,
             InfographicDetail,
             InfographicOrientation,
             InfographicStyle,
@@ -105,17 +100,14 @@ class NotebookLMService:
                             f"Primary URL error: {primary_url_error or 'none'}. "
                             f"Deep Research status: {research_result.get('status')}."
                         ),
-                        podcast_target_minutes=settings.podcast_target_minutes,
                     )
 
-                artifacts = await self._generate_artifacts_in_parallel(
+                artifacts = await self._generate_infographic(
                     client=client,
                     notebook_id=notebook_id,
                     package=package,
                     output_dir=output_dir,
                     enums={
-                        "AudioFormat": AudioFormat,
-                        "AudioLength": AudioLength,
                         "InfographicDetail": InfographicDetail,
                         "InfographicOrientation": InfographicOrientation,
                         "InfographicStyle": InfographicStyle,
@@ -127,33 +119,23 @@ class NotebookLMService:
                 return NotebookResult(
                     notebook_id=notebook_id,
                     notebook_url=notebook_url,
-                    audio_path=artifacts.get("podcast_path"),
-                    audio_url=artifacts.get("podcast_path"),
-                    audio_brief_path=artifacts.get("audio_brief_path"),
-                    audio_brief_url=artifacts.get("audio_brief_path"),
                     infographic_path=artifacts.get("infographic_path"),
                     infographic_url=artifacts.get("infographic_path"),
-                    status=_result_status(
-                        artifacts.get("podcast_path"),
-                        artifacts.get("audio_brief_path"),
-                        artifacts.get("infographic_path"),
-                    ),
+                    status="completed" if artifacts.get("infographic_path") else "artifacts_incomplete",
                     notes=(
                         f"Created NotebookLM notebook with selected-news text source. "
                         f"Primary URL source added: {'yes' if primary_url_source_id else 'no'}. "
                         f"Primary URL error: {primary_url_error or 'none'}. "
                         f"Deep Research status: {research_result.get('status')}. "
                         f"Research sources imported: {imported_research_sources}. "
-                        f"Podcast target: about {settings.podcast_target_minutes} minutes. "
-                        f"Parallel artifacts: {artifacts.get('summary')}."
+                        f"Infographic: {artifacts.get('summary')}."
                     ),
-                    podcast_target_minutes=settings.podcast_target_minutes,
                 )
         except Exception as exc:
             logger.error("NotebookLM automation failed: %s", exc, exc_info=True)
             raise
 
-    async def _generate_artifacts_in_parallel(
+    async def _generate_infographic(
         self,
         client: Any,
         notebook_id: str,
@@ -162,112 +144,41 @@ class NotebookLMService:
         enums: dict[str, Any],
     ) -> dict[str, str | None]:
         slug = f"{_slugify(package.title)}-{notebook_id[:8]}"
-
-        podcast_path = output_dir / f"{slug}-podcast.mp3"
-        audio_brief_path = output_dir / f"{slug}-audio-brief.mp3"
         infographic_path = output_dir / f"{slug}-infographic.png"
 
-        notes: list[str] = []
-        podcast_start, infographic_start = await asyncio.gather(
-            self._start_artifact(
-                "podcast",
-                client.artifacts.generate_audio(
-                    notebook_id,
-                    source_ids=None,
-                    language=package.language,
-                    audio_format=enums["AudioFormat"].DEEP_DIVE,
-                    audio_length=_preferred_audio_length(enums["AudioLength"]),
-                    instructions=_audio_instructions(package),
-                ),
-            ),
-            self._start_artifact(
-                "infographic",
-                client.artifacts.generate_infographic(
-                    notebook_id,
-                    source_ids=None,
-                    language=package.language,
-                    instructions=_infographic_instructions(package),
-                    orientation=enums["InfographicOrientation"].PORTRAIT,
-                    detail_level=enums["InfographicDetail"].CONCISE,
-                    style=enums["InfographicStyle"].PROFESSIONAL,
-                ),
+        infographic_start = await self._start_artifact(
+            "infographic",
+            client.artifacts.generate_infographic(
+                notebook_id,
+                source_ids=None,
+                language=package.language,
+                instructions=_infographic_instructions(package),
+                orientation=enums["InfographicOrientation"].PORTRAIT,
+                detail_level=enums["InfographicDetail"].STANDARD,
+                style=enums["InfographicStyle"].PROFESSIONAL,
             ),
         )
 
-        wait_tasks: list[tuple[str, Any]] = []
-        if podcast_start and getattr(podcast_start, "task_id", None):
-            wait_tasks.append(
-                (
-                    "podcast",
-                    self._wait_and_download_audio(
-                        client,
-                        notebook_id,
-                        podcast_start.task_id,
-                        podcast_path,
-                        "podcast",
-                    ),
-                )
-            )
-        else:
-            notes.append("podcast did not start")
+        infographic_result = None
         if infographic_start and getattr(infographic_start, "task_id", None):
-            wait_tasks.append(
-                (
-                    "infographic",
-                    self._wait_and_download_infographic(
-                        client,
-                        notebook_id,
-                        infographic_start.task_id,
-                        infographic_path,
-                    ),
+            try:
+                infographic_result = await self._wait_and_download_infographic(
+                    client,
+                    notebook_id,
+                    infographic_start.task_id,
+                    infographic_path,
                 )
-            )
-        else:
-            notes.append("infographic did not start")
-
-        results = await asyncio.gather(
-            *(task for _, task in wait_tasks),
-            return_exceptions=True,
-        )
-        downloaded: dict[str, str | None] = {
-            "podcast": None,
-            "audio brief": None,
-            "infographic": None,
-        }
-        for (label, _), result in zip(wait_tasks, results, strict=False):
-            if isinstance(result, Exception):
+            except Exception as exc:
                 logger.warning(
-                    "NotebookLM %s wait/download raised: %s: %s",
-                    label,
-                    type(result).__name__,
-                    result,
+                    "NotebookLM infographic wait/download raised: %s: %s",
+                    type(exc).__name__,
+                    exc,
                     exc_info=True,
                 )
-                notes.append(f"{label} failed during download")
-            else:
-                downloaded[label] = result
 
-        podcast_result = downloaded.get("podcast")
-        infographic_result = downloaded.get("infographic")
-
-        completed = [
-            name
-            for name, path in (
-                ("podcast", podcast_result),
-                ("infographic", infographic_result),
-            )
-            if path
-        ]
         return {
-            "podcast_path": podcast_result,
-            "audio_brief_path": None,
             "infographic_path": infographic_result,
-            "summary": "; ".join(
-                [
-                    f"completed: {', '.join(completed) if completed else 'none'}",
-                    *notes,
-                ]
-            ),
+            "summary": "completed: infographic" if infographic_result else "infographic did not complete",
         }
 
     async def _start_artifact(self, label: str, start_task: Any) -> Any | None:
@@ -291,46 +202,6 @@ class NotebookLMService:
             )
             return None
 
-    async def _wait_and_download_audio(
-        self,
-        client: Any,
-        notebook_id: str,
-        artifact_id: str,
-        output_path: Path,
-        label: str,
-    ) -> str | None:
-        settings = get_settings()
-        try:
-            final = await client.artifacts.wait_for_completion(
-                notebook_id,
-                artifact_id,
-                timeout=settings.notebooklm_audio_timeout_seconds,
-                poll_interval=8,
-            )
-            if getattr(final, "is_complete", False):
-                logger.info("NotebookLM %s generation complete. Downloading to %s", label, output_path)
-                output_path.parent.mkdir(parents=True, exist_ok=True)
-                download_path = await client.artifacts.download_audio(
-                    notebook_id,
-                    str(output_path),
-                    artifact_id=artifact_id,
-                )
-                saved_path = _ensure_local_copy(download_path, output_path, label)
-                if saved_path:
-                    logger.info("Successfully saved %s to %s", label, saved_path)
-                    return str(saved_path)
-                else:
-                    logger.warning("Download returned path %s but file does not exist", download_path)
-            else:
-                logger.warning("NotebookLM %s generation did not complete within timeout. Status: %s", label, getattr(final, "status", "unknown"))
-        except Exception as exc:
-            logger.warning(
-                "NotebookLM %s generation/download failed: %s: %s",
-                label,
-                type(exc).__name__,
-                exc,
-            )
-        return None
 
     async def _wait_and_download_infographic(
         self,
@@ -502,31 +373,6 @@ class NotebookLMService:
             return {"status": f"failed:{type(exc).__name__}", "imported_count": 0}
 
 
-def _audio_instructions(package: NotebookPackage) -> str:
-    settings = get_settings()
-    lp_list = package.learning_points
-    lp_text = ""
-    if lp_list:
-        items = ", ".join(lp_list)
-        lp_text = (
-            f"\n\nSelected learning points: {items}\n"
-            "For each learning point, dedicate a segment: explain the concept clearly, "
-            "provide historical context or background, and connect it to the news."
-        )
-    return (
-        f"Create an English Deep Dive podcast of exactly {settings.podcast_target_minutes} minutes. "
-        "Structure: "
-        "(1) News Brief — 2 minutes covering what happened and why it matters. "
-        "(2) Learning Point Deep Dive — one segment per selected learning point, "
-        "each explaining the concept, providing background, and connecting it to the news. "
-        "(3) Closing — 1 minute on how the learning points relate to the bigger picture. "
-        "Tone: conversational, intellectually engaging, suitable for a senior technology "
-        "and policy professional. Avoid generic commentary; give sharp, grounded analysis."
-        f"{lp_text}"
-    )
-
-
-
 def _infographic_instructions(package: NotebookPackage) -> str:
     lp_list = package.learning_points
     lp_text = ""
@@ -537,8 +383,8 @@ def _infographic_instructions(package: NotebookPackage) -> str:
             "a clear heading, a 2-sentence explanation, and a 1-sentence connection to the news."
         )
     return (
-        "Create a portrait-oriented, concise, professional infographic in English. "
-        "Use the CONCISE detail level. "
+        "Create a portrait-oriented, professional infographic in English. "
+        "Use the STANDARD detail level. "
         "Structure (max 6 blocks total): "
         "Section 1 — News Brief: Block 1: What Happened (2-3 sentences). "
         "Block 2: Why It Matters (2-3 sentences). "
@@ -575,18 +421,7 @@ def _research_query(package: NotebookPackage) -> str:
     )
 
 
-def _preferred_audio_length(audio_length_enum: Any) -> Any:
-    for name in ("DEFAULT", "MEDIUM", "SHORT"):
-        if hasattr(audio_length_enum, name):
-            return getattr(audio_length_enum, name)
-    return None
 
-
-def _short_audio_length(audio_length_enum: Any) -> Any:
-    for name in ("DEFAULT", "SHORT"):
-        if hasattr(audio_length_enum, name):
-            return getattr(audio_length_enum, name)
-    return None
 
 
 def _ensure_local_copy(download_path: str | None, output_path: Path, label: str) -> Path | None:
@@ -636,20 +471,3 @@ def _notebook_url(base_url: str, notebook_id: str) -> str:
     return f"{base_url.rstrip('/')}/notebook/{notebook_id}"
 
 
-def _result_status(
-    audio_path: str | None,
-    audio_brief_path: str | None,
-    infographic_path: str | None,
-) -> str:
-    if audio_path and audio_brief_path and infographic_path:
-        return "completed"
-    if any((audio_path, audio_brief_path, infographic_path)):
-        completed = []
-        if audio_path:
-            completed.append("podcast")
-        if audio_brief_path:
-            completed.append("audio_brief")
-        if infographic_path:
-            completed.append("infographic")
-        return f"partial_completed:{','.join(completed)}"
-    return "artifacts_incomplete"
